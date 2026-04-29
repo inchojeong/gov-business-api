@@ -3,6 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 import requests
 import pymysql
 import json
+import os
+from dotenv import load_dotenv
 
 app = FastAPI()
 
@@ -14,13 +16,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+load_dotenv()
+
 # 중소벤처기업부 사업공고목록 API 발급 키
-GOV_API_BASE_URL = "https://api.odcloud.kr/api/3034791/v1/uddi:fa09d13d-bce8-474e-b214-8008e79ec08f"
-SERVICE_KEY = "1eab947356fc7e3ce8747d8d0b37f35f6ae3ff2face61c8086466ae37b9c673e"
+GOV_API_BASE_URL = os.getenv("GOV_API_BASE_URL")
+SERVICE_KEY = os.getenv("SERVICE_KEY")
 
 # 과학기술정보통신부 사업공고 API 발급 키
-MSIT_API_URL = "http://apis.data.go.kr/1721000/msitannouncementinfo/businessAnnouncMentList"
-MSIT_SERVICE_KEY = "1eab947356fc7e3ce8747d8d0b37f35f6ae3ff2face61c8086466ae37b9c673e"
+MSIT_API_URL = os.getenv("MSIT_API_URL")
+MSIT_SERVICE_KEY = os.getenv("MSIT_SERVICE_KEY")
 
 # MySQL 설정
 DB_CONFIG = {

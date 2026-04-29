@@ -12,6 +12,7 @@ frontend/out/
 .env
 .env.local
 .env.*.local
+backend/.env
 
 # OS / Editor
 .DS_Store

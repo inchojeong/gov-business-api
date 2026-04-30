@@ -8,6 +8,7 @@ from collectors.gov_collector import collect_gov_programs
 from collectors.msit_collector import collect_msit_programs
 from services.keyword_service import run_process_keywords
 from services.programs_service import list_programs
+from services.recommend_engine import recommend_programs as run_recommend_programs
 
 load_dotenv()
 
@@ -131,6 +132,20 @@ def _empty_to_none(v: str | None) -> str | None:
     if v is None:
         return None
     return v if v != "" else None
+
+
+@app.get("/recommend-programs")
+def recommend_programs_route(
+    keywords: str = Query("", max_length=500),
+    category: str | None = Query(None),
+    limit: int = Query(20, ge=1, le=100),
+):
+    """rule-based 키워드 추천(1차). keywords가 비면 빈 items."""
+    return run_recommend_programs(
+        keywords=_empty_to_none(keywords) or "",
+        interest_category=_empty_to_none(category),
+        limit=limit,
+    )
 
 
 @app.get("/support")

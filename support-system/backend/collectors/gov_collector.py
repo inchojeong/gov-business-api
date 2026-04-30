@@ -1,8 +1,11 @@
+import logging
 import os
 from typing import Any, Dict
 
 import requests
 from dotenv import load_dotenv
+
+logger = logging.getLogger(__name__)
 
 from collectors.field_mapping import (
     first_nonempty_str,
@@ -96,6 +99,7 @@ def _map_gov_item_to_row(item: Dict[str, Any]) -> Dict[str, Any] | None:
 
 
 def collect_gov_programs(page: int = 1, per_page: int = 50) -> Dict[str, Any]:
+    logger.info("GOV 수집 시작 page=%s per_page=%s", page, per_page)
     params = {
         "serviceKey": SERVICE_KEY,
         "page": page,
@@ -103,18 +107,45 @@ def collect_gov_programs(page: int = 1, per_page: int = 50) -> Dict[str, Any]:
         "returnType": "JSON",
     }
 
-    response = requests.get(GOV_API_BASE_URL, params=params)
+    response = requests.get(GOV_API_BASE_URL, params=params, timeout=30)
 
     if response.status_code != 200:
+        logger.error(
+            "GOV 수집 API 실패 status=%s body_prefix=%s",
+            response.status_code,
+            (response.text or "")[:400],
+        )
         return {
             "success": False,
             "message": "정부 API 호출 실패",
             "status_code": response.status_code,
             "body": response.text,
+            "fetched_count": 0,
+            "inserted_count": 0,
+            "skipped_count": 0,
+            "updated_count": 0,
+            "error_count": 1,
         }
 
-    data = response.json()
+    try:
+        data = response.json()
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("GOV 수집 JSON 파싱 실패: %s", exc)
+        return {
+            "success": False,
+            "message": "정부 API 응답 파싱 실패",
+            "fetched_count": 0,
+            "inserted_count": 0,
+            "skipped_count": 0,
+            "updated_count": 0,
+            "error_count": 1,
+        }
+
     items = data.get("data", [])
+    if not isinstance(items, list):
+        items = []
+    fetched_count = len(items)
+    logger.info("GOV 수집 API 응답 건수 fetched_count=%s", fetched_count)
 
     conn = get_db()
     saved_count = 0
@@ -179,13 +210,40 @@ def collect_gov_programs(page: int = 1, per_page: int = 50) -> Dict[str, Any]:
                 saved_count += 1
 
         conn.commit()
-
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("GOV 수집 DB 처리 실패: %s", exc)
+        try:
+            conn.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        return {
+            "success": False,
+            "message": f"DB 저장 중 오류: {exc}",
+            "fetched_count": fetched_count,
+            "inserted_count": saved_count,
+            "skipped_count": skipped_count,
+            "updated_count": 0,
+            "error_count": 1,
+        }
     finally:
-        conn.close()
+        try:
+            conn.close()
+        except Exception:  # noqa: BLE001
+            pass
 
+    logger.info(
+        "GOV 수집 종료 inserted=%s skipped=%s fetched=%s",
+        saved_count,
+        skipped_count,
+        fetched_count,
+    )
     return {
         "success": True,
         "message": "수집 완료",
         "saved_count": saved_count,
         "skipped_count": skipped_count,
+        "fetched_count": fetched_count,
+        "inserted_count": saved_count,
+        "updated_count": 0,
+        "error_count": 0,
     }

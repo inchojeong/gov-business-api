@@ -1,8 +1,11 @@
+import logging
 import os
 from typing import Any, Dict, List
 
 import requests
 from dotenv import load_dotenv
+
+logger = logging.getLogger(__name__)
 
 from collectors.field_mapping import (
     first_nonempty_str,
@@ -87,9 +90,16 @@ def collect_msit_programs(
     page_count: int = 3,
     per_page: int = 10,
 ) -> Dict[str, Any]:
+    logger.info(
+        "MSIT 수집 시작 start_page=%s page_count=%s per_page=%s",
+        start_page,
+        page_count,
+        per_page,
+    )
     conn = get_db()
     saved_count = 0
     skipped_count = 0
+    fetched_count = 0
     failed_pages: List[Dict[str, Any]] = []
 
     try:
@@ -103,12 +113,21 @@ def collect_msit_programs(
                     "returnType": "json",
                 }
 
-                response = requests.get(MSIT_API_URL, params=params, timeout=10)
+                try:
+                    response = requests.get(MSIT_API_URL, params=params, timeout=30)
+                except Exception as exc:  # noqa: BLE001
+                    logger.exception("MSIT 수집 page=%s 요청 실패: %s", page, exc)
+                    failed_pages.append({"page": page, "error": str(exc)})
+                    continue
 
-                print("과기정통부 요청 URL:", response.url)
-                print("과기정통부 상태코드:", response.status_code)
+                logger.info("MSIT 수집 page=%s status=%s", page, response.status_code)
 
                 if response.status_code != 200:
+                    logger.error(
+                        "MSIT 수집 page=%s HTTP 오류 body_prefix=%s",
+                        page,
+                        (response.text or "")[:400],
+                    )
                     failed_pages.append({
                         "page": page,
                         "status_code": response.status_code,
@@ -118,7 +137,8 @@ def collect_msit_programs(
 
                 try:
                     data = response.json()
-                except Exception:
+                except Exception as exc:  # noqa: BLE001
+                    logger.exception("MSIT 수집 page=%s JSON 파싱 실패: %s", page, exc)
                     failed_pages.append({
                         "page": page,
                         "status_code": response.status_code,
@@ -128,11 +148,11 @@ def collect_msit_programs(
 
                 response_data = data.get("response", [])
 
-                body = {}
+                body: Dict[str, Any] = {}
 
                 if isinstance(response_data, list):
                     for part in response_data:
-                        if "body" in part:
+                        if isinstance(part, dict) and "body" in part:
                             body = part["body"]
                             break
                 elif isinstance(response_data, dict):
@@ -140,7 +160,7 @@ def collect_msit_programs(
 
                 items = body.get("items", [])
 
-                normalized_items = []
+                normalized_items: List[Any] = []
 
                 if isinstance(items, list):
                     for row in items:
@@ -153,6 +173,10 @@ def collect_msit_programs(
                         normalized_items.append(items["item"])
                     else:
                         normalized_items.append(items)
+
+                page_fetched = len(normalized_items)
+                fetched_count += page_fetched
+                logger.info("MSIT 수집 page=%s 응답 항목 수=%s", page, page_fetched)
 
                 for item in normalized_items:
                     if not isinstance(item, dict):
@@ -210,14 +234,70 @@ def collect_msit_programs(
                     saved_count += 1
 
         conn.commit()
-
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("MSIT 수집 DB 처리 실패: %s", exc)
+        try:
+            conn.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        return {
+            "success": False,
+            "message": f"DB 저장 중 오류: {exc}",
+            "saved_count": saved_count,
+            "skipped_count": skipped_count,
+            "fetched_count": fetched_count,
+            "inserted_count": saved_count,
+            "updated_count": 0,
+            "error_count": len(failed_pages) + 1,
+            "failed_pages": failed_pages,
+        }
     finally:
-        conn.close()
+        try:
+            conn.close()
+        except Exception:  # noqa: BLE001
+            pass
 
+    error_count = len(failed_pages)
+    total_failure = (
+        saved_count == 0
+        and skipped_count == 0
+        and fetched_count == 0
+        and len(failed_pages) > 0
+    )
+
+    if total_failure:
+        msg = f"과기정통부 API 수집 실패: 페이지 오류 {error_count}건 (응답 항목 0건)"
+        logger.error("MSIT 수집 종료(실패) %s", msg)
+        return {
+            "success": False,
+            "message": msg,
+            "saved_count": saved_count,
+            "skipped_count": skipped_count,
+            "fetched_count": fetched_count,
+            "inserted_count": saved_count,
+            "updated_count": 0,
+            "error_count": error_count,
+            "failed_pages": failed_pages,
+        }
+
+    logger.info(
+        "MSIT 수집 종료 inserted=%s skipped=%s fetched=%s failed_pages=%s",
+        saved_count,
+        skipped_count,
+        fetched_count,
+        error_count,
+    )
+    msg = "과기정통부 API 수집 완료"
+    if failed_pages:
+        msg += f" (페이지 오류 {error_count}건, 일부 구간은 정상 수집)"
     return {
         "success": True,
-        "message": "과기정통부 API 수집 완료",
+        "message": msg,
         "saved_count": saved_count,
         "skipped_count": skipped_count,
+        "fetched_count": fetched_count,
+        "inserted_count": saved_count,
+        "updated_count": 0,
+        "error_count": error_count,
         "failed_pages": failed_pages,
     }

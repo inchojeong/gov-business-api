@@ -7,7 +7,12 @@ import {
   maxCreatedAtFromPrograms,
   type ReceptionStatus,
 } from "../lib/recommendScore";
-import { DashboardChartsRow, type ChartBarItem } from "../components/support-dashboard-charts";
+import {
+  DashboardChartsRow,
+  type ChartBarItem,
+  type ChartPieSegment,
+  type MonthlyRegistrationPoint,
+} from "../components/support-dashboard-charts";
 
 /** /support 표준 응답 + 하위 호환 별칭 */
 type SupportProgram = {
@@ -101,6 +106,8 @@ function countRegisteredLast7Days(programs: SupportProgram[]): number {
 const SUPPORT_URL = "http://localhost:8000/support";
 const PAGE_SIZE = 9;
 
+const RECEPTION_CHART_ORDER = ["접수중", "예정", "마감", "기간미상"] as const;
+
 const CATEGORY_OPTIONS = [
   { value: "", label: "전체" },
   { value: "R&D", label: "R&D" },
@@ -117,6 +124,28 @@ const SOURCE_OPTIONS = [
   { value: "MSIT", label: "MSIT" },
 ];
 
+type SortOrderKey = "recommended" | "latest" | "oldest" | "title" | "source";
+
+const SORT_ORDER_OPTIONS: Array<{ value: SortOrderKey; label: string }> = [
+  { value: "recommended", label: "추천순" },
+  { value: "latest", label: "최신순" },
+  { value: "oldest", label: "오래된순" },
+  { value: "title", label: "제목순" },
+  { value: "source", label: "출처순" },
+];
+
+type SupportListSummary = {
+  open: number;
+  recommend: number;
+  recent7: number;
+  by_category: Record<string, number>;
+  by_source: Record<string, number>;
+  by_reception_status?: Record<string, number>;
+  /** summary 확장 시 월별 등록 추이 */
+  by_month?: MonthlyRegistrationPoint[];
+  max_created_at: string | null;
+};
+
 const RECEPTION_STATUS_OPTIONS: Array<{ value: ReceptionStatus | ""; label: string }> = [
   { value: "", label: "전체" },
   { value: "접수중", label: "접수중" },
@@ -129,17 +158,112 @@ function buildSupportListUrl(filters: {
   category: string;
   source: string;
   keyword: string;
+  reception: string;
+  page: number;
+  size: number;
+  sort: SortOrderKey;
 }): string {
   const keyword = filters.keyword?.trim() || undefined;
   const category = filters.category?.trim() || undefined;
   const source = filters.source?.trim() || undefined;
+  const reception = filters.reception?.trim() || undefined;
+  const apiSort = filters.sort === "recommended" ? "latest" : filters.sort;
 
   const params = new URLSearchParams();
   if (category) params.set("category", category);
   if (source) params.set("source", source);
   if (keyword) params.set("keyword", keyword);
-  const q = params.toString();
-  return q ? `${SUPPORT_URL}?${q}` : SUPPORT_URL;
+  if (reception) params.set("reception_status", reception);
+  params.set("page", String(Math.max(1, filters.page)));
+  params.set("size", String(Math.min(100, Math.max(1, filters.size))));
+  params.set("sort", apiSort);
+  return `${SUPPORT_URL}?${params.toString()}`;
+}
+
+function parseSupportListResponse(raw: unknown): {
+  items: SupportProgram[];
+  page: number;
+  size: number;
+  total_count: number;
+  total_pages: number;
+  summary: SupportListSummary | null;
+} {
+  if (Array.isArray(raw)) {
+    const items = raw
+      .filter((row): row is Record<string, unknown> => row != null && typeof row === "object")
+      .map((row) => normalizeSupportProgram(row));
+    return {
+      items,
+      page: 1,
+      size: items.length,
+      total_count: items.length,
+      total_pages: items.length > 0 ? 1 : 0,
+      summary: null,
+    };
+  }
+  if (!raw || typeof raw !== "object") {
+    return { items: [], page: 1, size: PAGE_SIZE, total_count: 0, total_pages: 0, summary: null };
+  }
+  const o = raw as Record<string, unknown>;
+  const itemsRaw = o.items;
+  const items = Array.isArray(itemsRaw)
+    ? itemsRaw
+        .filter((row): row is Record<string, unknown> => row != null && typeof row === "object")
+        .map((row) => normalizeSupportProgram(row))
+    : [];
+  const summaryRaw = o.summary;
+  let summary: SupportListSummary | null = null;
+  if (summaryRaw && typeof summaryRaw === "object") {
+    const s = summaryRaw as Record<string, unknown>;
+    const byCat = s.by_category;
+    const bySrc = s.by_source;
+    const byRecv = s.by_reception_status;
+    const byMonthRaw = s.by_month;
+    let byMonth: MonthlyRegistrationPoint[] | undefined;
+    if (Array.isArray(byMonthRaw)) {
+      byMonth = byMonthRaw
+        .filter((x): x is Record<string, unknown> => x != null && typeof x === "object")
+        .map((x) => ({
+          month: String(x.month ?? x.label ?? "").trim(),
+          count: Number(x.count ?? x.value) || 0,
+        }))
+        .filter((x) => x.month.length > 0);
+      if (byMonth.length === 0) byMonth = undefined;
+    }
+    summary = {
+      open: Number(s.open) || 0,
+      recommend: Number(s.recommend) || 0,
+      recent7: Number(s.recent7) || 0,
+      by_category:
+        byCat && typeof byCat === "object" && !Array.isArray(byCat)
+          ? Object.fromEntries(
+              Object.entries(byCat as Record<string, unknown>).map(([k, v]) => [k, Number(v) || 0])
+            )
+          : {},
+      by_source:
+        bySrc && typeof bySrc === "object" && !Array.isArray(bySrc)
+          ? Object.fromEntries(
+              Object.entries(bySrc as Record<string, unknown>).map(([k, v]) => [k, Number(v) || 0])
+            )
+          : {},
+      by_reception_status:
+        byRecv && typeof byRecv === "object" && !Array.isArray(byRecv)
+          ? Object.fromEntries(
+              Object.entries(byRecv as Record<string, unknown>).map(([k, v]) => [k, Number(v) || 0])
+            )
+          : undefined,
+      by_month: byMonth,
+      max_created_at: strOrNull(s.max_created_at),
+    };
+  }
+  return {
+    items,
+    page: Number(o.page) || 1,
+    size: Number(o.size) || PAGE_SIZE,
+    total_count: Number(o.total_count) || 0,
+    total_pages: Number(o.total_pages) || 0,
+    summary,
+  };
 }
 
 function sourceBadgeClasses(source: string): string {
@@ -168,6 +292,78 @@ type SyncStepPayload = {
   result: unknown;
 };
 
+/** /sync-supports 각 단계 result에 포함될 수 있는 집계 필드 */
+type SyncStepResultStats = {
+  fetched_count?: number;
+  inserted_count?: number;
+  skipped_count?: number;
+  updated_count?: number;
+  error_count?: number;
+  saved_count?: number;
+  processed_count?: number;
+  keyword_count?: number;
+  failed_pages?: unknown[];
+  message?: string;
+};
+
+function asSyncResultStats(res: unknown): SyncStepResultStats | null {
+  if (!res || typeof res !== "object" || Array.isArray(res)) return null;
+  return res as SyncStepResultStats;
+}
+
+function nOrUndef(v: unknown): number | undefined {
+  if (typeof v === "number" && !Number.isNaN(v)) return v;
+  if (typeof v === "string" && v.trim() !== "") {
+    const x = Number(v);
+    return Number.isNaN(x) ? undefined : x;
+  }
+  return undefined;
+}
+
+/** 동기화 단계별 요약 문구 (가능한 필드만 조합) */
+function formatSyncStepDetail(step: SyncStepPayload | undefined, stepKey: "gov" | "msit" | "keywords"): string | null {
+  if (!step?.success) return null;
+  const r = asSyncResultStats(step.result);
+  if (!r) return null;
+  const parts: string[] = [];
+  const fetched = nOrUndef(r.fetched_count) ?? (stepKey === "keywords" ? nOrUndef(r.processed_count) : undefined);
+  const inserted = nOrUndef(r.inserted_count) ?? nOrUndef(r.saved_count);
+  const skipped = nOrUndef(r.skipped_count);
+  const updated = nOrUndef(r.updated_count);
+  const errors = nOrUndef(r.error_count);
+  const kwRows = nOrUndef(r.keyword_count);
+
+  if (fetched != null) {
+    parts.push(stepKey === "keywords" ? `대상 공고 ${fetched}건` : `API 응답 ${fetched}건`);
+  }
+  if (stepKey !== "keywords" && inserted != null) {
+    parts.push(`신규 저장 ${inserted}건`);
+  } else if (stepKey === "keywords" && inserted != null && inserted > 0) {
+    parts.push(`신규 키워드 행 ${inserted}건`);
+  }
+  if (skipped != null && skipped > 0) {
+    parts.push(
+      stepKey === "keywords" ? `키워드 미추출 공고 ${skipped}건` : `중복·제외 ${skipped}건`
+    );
+  }
+  if (updated != null && updated > 0) {
+    parts.push(`키워드 갱신 ${updated}건`);
+  }
+  if (kwRows != null && kwRows > 0 && stepKey === "keywords") {
+    parts.push(`키워드 연결 ${kwRows}건`);
+  }
+  if (errors != null && errors > 0 && !(r.failed_pages && Array.isArray(r.failed_pages) && r.failed_pages.length > 0)) {
+    parts.push(`페이지·구간 오류 ${errors}건`);
+  }
+  return parts.length ? parts.join(" · ") : null;
+}
+
+function formatSyncStepWarning(step: SyncStepPayload | undefined): string | null {
+  const r = asSyncResultStats(step?.result);
+  if (!r?.failed_pages || !Array.isArray(r.failed_pages) || r.failed_pages.length === 0) return null;
+  return `일부 페이지 응답 실패 ${r.failed_pages.length}건 (상세는 서버 로그)`;
+}
+
 type SyncSupportsResponse = {
   all_success: boolean;
   gov_collect: SyncStepPayload;
@@ -182,11 +378,16 @@ const labelClass = "text-xs font-semibold uppercase tracking-wide text-slate-600
 export default function Home() {
   const [data, setData] = useState<SupportProgram[]>([]);
   const [page, setPage] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
+  const [listSummary, setListSummary] = useState<SupportListSummary | null>(null);
+  const [listVersion, setListVersion] = useState(0);
 
   const [filterCategory, setFilterCategory] = useState("");
   const [filterSource, setFilterSource] = useState("");
   const [filterKeyword, setFilterKeyword] = useState("");
   const [filterReceptionStatus, setFilterReceptionStatus] = useState<ReceptionStatus | "">("");
+  const [sortOrder, setSortOrder] = useState<SortOrderKey>("recommended");
 
   const [appliedCategory, setAppliedCategory] = useState("");
   const [appliedSource, setAppliedSource] = useState("");
@@ -200,35 +401,72 @@ export default function Home() {
   const [listError, setListError] = useState<string | null>(null);
   const [selectedProgram, setSelectedProgram] = useState<SupportProgram | null>(null);
 
-  const loadSupportList = useCallback(
-    async (filters?: { category: string; source: string; keyword: string }) => {
-      setListLoading(true);
-      setListError(null);
-      const url = filters
-        ? buildSupportListUrl(filters)
-        : SUPPORT_URL;
-      try {
-        const res = await fetch(url);
-        if (!res.ok) {
-          throw new Error(`목록 조회 실패 (${res.status})`);
-        }
-        const result: unknown = await res.json();
-        setData(
-          Array.isArray(result)
-            ? result
-                .filter((row): row is Record<string, unknown> => row != null && typeof row === "object")
-                .map((row) => normalizeSupportProgram(row))
-            : []
-        );
-      } catch (e) {
-        setListError(e instanceof Error ? e.message : "목록을 불러오지 못했습니다.");
-        setData([]);
-      } finally {
-        setListLoading(false);
+  const fetchPrograms = useCallback(async () => {
+    setListLoading(true);
+    setListError(null);
+    const url = buildSupportListUrl({
+      category: appliedCategory,
+      source: appliedSource,
+      keyword: appliedKeyword,
+      reception: filterReceptionStatus,
+      page,
+      size: PAGE_SIZE,
+      sort: sortOrder,
+    });
+    try {
+      const res = await fetch(url);
+      if (!res.ok) {
+        throw new Error(`목록 조회 실패 (${res.status})`);
       }
-    },
-    []
-  );
+      const result: unknown = await res.json();
+      const parsed = parseSupportListResponse(result);
+      setTotalCount(parsed.total_count);
+      setTotalPages(parsed.total_pages);
+      setListSummary(parsed.summary);
+
+      let items = parsed.items;
+      if (sortOrder === "recommended") {
+        const maxFromSummary =
+          parsed.summary?.max_created_at != null && String(parsed.summary.max_created_at).trim() !== ""
+            ? new Date(String(parsed.summary.max_created_at).trim().replace(/\./g, "-"))
+            : null;
+        const maxCreatedAt =
+          maxFromSummary && !Number.isNaN(maxFromSummary.getTime())
+            ? maxFromSummary
+            : maxCreatedAtFromPrograms(items);
+        const ctx = {
+          appliedKeyword: appliedKeyword,
+          appliedCategory: appliedCategory,
+          appliedSource: appliedSource,
+          maxCreatedAt,
+        };
+        items = [...items].sort(
+          (a, b) => computeRecommendScore(b, ctx).score - computeRecommendScore(a, ctx).score
+        );
+      }
+      setData(items);
+    } catch (e) {
+      setListError(e instanceof Error ? e.message : "목록을 불러오지 못했습니다.");
+      setData([]);
+      setTotalCount(0);
+      setTotalPages(0);
+      setListSummary(null);
+    } finally {
+      setListLoading(false);
+    }
+  }, [
+    appliedCategory,
+    appliedSource,
+    appliedKeyword,
+    filterReceptionStatus,
+    page,
+    sortOrder,
+    listVersion,
+  ]);
+
+  useEffect(() => {
+    void fetchPrograms();
+  }, [fetchPrograms]);
 
   const handleSearch = () => {
     setPage(1);
@@ -238,11 +476,7 @@ export default function Home() {
     setAppliedCategory(cat);
     setAppliedSource(src);
     setAppliedKeyword(kw);
-    void loadSupportList({
-      category: filterCategory,
-      source: filterSource,
-      keyword: filterKeyword,
-    });
+    setListVersion((v) => v + 1);
   };
 
   const handleReset = () => {
@@ -250,15 +484,12 @@ export default function Home() {
     setFilterSource("");
     setFilterKeyword("");
     setFilterReceptionStatus("");
+    setSortOrder("recommended");
     setAppliedCategory("");
     setAppliedSource("");
     setAppliedKeyword("");
     setPage(1);
-    void loadSupportList({
-      category: "",
-      source: "",
-      keyword: "",
-    });
+    setListVersion((v) => v + 1);
   };
 
   const syncSupports = async () => {
@@ -295,11 +526,8 @@ export default function Home() {
         setSyncMessage(null);
       }
 
-      await loadSupportList({
-        category: appliedCategory,
-        source: appliedSource,
-        keyword: appliedKeyword,
-      });
+      setPage(1);
+      setListVersion((v) => v + 1);
     } catch (e) {
       setLastSync(null);
       setSyncMessage(e instanceof Error ? e.message : "동기화에 실패했습니다.");
@@ -308,28 +536,26 @@ export default function Home() {
     }
   };
 
-  useEffect(() => {
-    void loadSupportList();
-  }, [loadSupportList]);
+  const maxCreatedAt = useMemo(() => {
+    if (listSummary?.max_created_at != null && String(listSummary.max_created_at).trim() !== "") {
+      const d = new Date(String(listSummary.max_created_at).trim().replace(/\./g, "-"));
+      if (!Number.isNaN(d.getTime())) return d;
+    }
+    return maxCreatedAtFromPrograms(data);
+  }, [listSummary, data]);
 
-  const maxCreatedAt = useMemo(() => maxCreatedAtFromPrograms(data), [data]);
-
-  const filteredData = useMemo(() => {
-    if (!filterReceptionStatus) return data;
-    return data.filter(
-      (item) => getReceptionStatus(item.start_date, item.end_date) === filterReceptionStatus
-    );
-  }, [data, filterReceptionStatus]);
-
-  const totalPages = Math.max(1, Math.ceil(filteredData.length / PAGE_SIZE));
-  const safePage = Math.min(page, totalPages);
-  const pageSlice = useMemo(() => {
-    const p = Math.min(page, Math.max(1, Math.ceil(filteredData.length / PAGE_SIZE) || 1));
-    const start = (p - 1) * PAGE_SIZE;
-    return filteredData.slice(start, start + PAGE_SIZE);
-  }, [filteredData, page]);
+  const displayTotalPages = totalCount > 0 ? Math.max(1, totalPages) : 0;
+  const safePage = displayTotalPages > 0 ? Math.min(page, displayTotalPages) : 1;
 
   const kpiMetrics = useMemo(() => {
+    if (listSummary) {
+      return {
+        total: totalCount,
+        open: listSummary.open,
+        recommend: listSummary.recommend,
+        recent7: listSummary.recent7,
+      };
+    }
     const ctx = {
       appliedKeyword,
       appliedCategory,
@@ -348,9 +574,14 @@ export default function Home() {
       recommend,
       recent7: countRegisteredLast7Days(data),
     };
-  }, [data, appliedKeyword, appliedCategory, appliedSource, maxCreatedAt]);
+  }, [listSummary, totalCount, data, appliedKeyword, appliedCategory, appliedSource, maxCreatedAt]);
 
   const chartCategoryItems = useMemo((): ChartBarItem[] => {
+    if (listSummary?.by_category && Object.keys(listSummary.by_category).length > 0) {
+      const entries = Object.entries(listSummary.by_category).sort((a, b) => b[1] - a[1]);
+      const max = Math.max(1, ...entries.map(([, v]) => v));
+      return entries.map(([label, value]) => ({ label, value, max }));
+    }
     const map = new Map<string, number>();
     for (const p of data) {
       const key = p.category && p.category.trim() ? p.category.trim() : "미분류";
@@ -359,9 +590,22 @@ export default function Home() {
     const entries = [...map.entries()].sort((a, b) => b[1] - a[1]);
     const max = Math.max(1, ...entries.map(([, v]) => v));
     return entries.map(([label, value]) => ({ label, value, max }));
-  }, [data]);
+  }, [listSummary, data]);
 
   const chartSourceItems = useMemo((): ChartBarItem[] => {
+    if (listSummary?.by_source && Object.keys(listSummary.by_source).length > 0) {
+      const order = ["GOV", "MSIT", "기타"];
+      const entries = Object.entries(listSummary.by_source).sort((a, b) => {
+        const ia = order.indexOf(a[0]);
+        const ib = order.indexOf(b[0]);
+        if (ia >= 0 && ib >= 0) return ia - ib;
+        if (ia >= 0) return -1;
+        if (ib >= 0) return 1;
+        return b[1] - a[1];
+      });
+      const max = Math.max(1, ...entries.map(([, v]) => v));
+      return entries.map(([label, value]) => ({ label, value, max }));
+    }
     const map = new Map<string, number>();
     for (const p of data) {
       const key = p.source && p.source.trim() ? p.source.trim().toUpperCase() : "기타";
@@ -378,11 +622,30 @@ export default function Home() {
     });
     const max = Math.max(1, ...entries.map(([, v]) => v));
     return entries.map(([label, value]) => ({ label, value, max }));
-  }, [data]);
+  }, [listSummary, data]);
+
+  const chartReceptionSegments = useMemo((): ChartPieSegment[] => {
+    const fromSummary = listSummary?.by_reception_status;
+    if (fromSummary && Object.keys(fromSummary).length > 0) {
+      return RECEPTION_CHART_ORDER.map((name) => ({
+        name,
+        value: fromSummary[name] ?? 0,
+      }));
+    }
+    const map = new Map<string, number>();
+    for (const p of data) {
+      const st = getReceptionStatus(p.start_date, p.end_date);
+      map.set(st, (map.get(st) ?? 0) + 1);
+    }
+    return RECEPTION_CHART_ORDER.map((name) => ({
+      name,
+      value: map.get(name) ?? 0,
+    }));
+  }, [listSummary, data]);
 
   useEffect(() => {
-    if (page > totalPages) setPage(totalPages);
-  }, [page, totalPages]);
+    if (displayTotalPages > 0 && page > displayTotalPages) setPage(displayTotalPages);
+  }, [page, displayTotalPages]);
 
   const closeDetailPanel = useCallback(() => {
     setSelectedProgram(null);
@@ -432,11 +695,14 @@ export default function Home() {
   const stepRow = (
     label: string,
     step: SyncStepPayload | undefined,
-    showPlaceholder: boolean
+    showPlaceholder: boolean,
+    stepKey: "gov" | "msit" | "keywords"
   ) => {
     if (!step && !showPlaceholder) return null;
     const ok = step?.success === true;
     const err = step?.error;
+    const detail = formatSyncStepDetail(step, stepKey);
+    const warn = formatSyncStepWarning(step);
     const box =
       step == null
         ? "border-slate-200 bg-slate-50/80 text-slate-500 backdrop-blur-sm"
@@ -446,11 +712,20 @@ export default function Home() {
     return (
       <div
         key={label}
-        className={`flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5 text-sm ${box}`}
+        className={`flex flex-col gap-1.5 rounded-lg border px-3 py-2.5 text-sm sm:flex-row sm:items-start sm:justify-between sm:gap-3 ${box}`}
       >
-        <span className="font-semibold text-slate-900">{label}</span>
-        <span className="shrink-0 text-right text-sm">
-          {!step && showPlaceholder ? "—" : ok ? "성공" : `실패${err ? `: ${err}` : ""}`}
+        <div className="min-w-0 flex-1 space-y-1">
+          <p className="font-semibold text-slate-900">{label}</p>
+          {ok && detail && <p className="text-xs font-medium leading-snug text-emerald-950/85">{detail}</p>}
+          {ok && warn && <p className="text-xs font-medium text-amber-900/90">{warn}</p>}
+          {!ok && step && (
+            <p className="text-xs font-medium leading-snug text-red-950/90" role="alert">
+              {err ?? "실패"}
+            </p>
+          )}
+        </div>
+        <span className="shrink-0 text-right text-sm font-semibold sm:pt-0.5">
+          {!step && showPlaceholder ? "—" : ok ? "성공" : "실패"}
         </span>
       </div>
     );
@@ -486,7 +761,7 @@ export default function Home() {
                   disabled={syncLoading}
                   className="inline-flex h-11 w-full items-center justify-center rounded-lg bg-slate-900 px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70 lg:w-auto"
                 >
-                  {syncLoading ? "동기화 중…" : "전체 데이터 동기화"}
+                  {syncLoading ? "동기화 중..." : "전체 데이터 동기화"}
                 </button>
                 <p className="text-xs text-slate-600 lg:text-right">
                   GOV → MSIT 수집 후 키워드 처리까지 순차 실행됩니다.
@@ -499,9 +774,9 @@ export default function Home() {
         <section className="mb-6 rounded-xl border border-slate-200/80 bg-white/70 p-4 shadow-sm backdrop-blur-sm sm:p-5">
           <h2 className="sr-only">데이터 동기화 결과</h2>
           <div className="grid gap-2 sm:grid-cols-3">
-            {stepRow("GOV 수집", lastSync?.gov_collect, !!lastSync)}
-            {stepRow("MSIT 수집", lastSync?.msit_collect, !!lastSync)}
-            {stepRow("키워드 처리", lastSync?.process_keywords, !!lastSync)}
+            {stepRow("GOV 수집", lastSync?.gov_collect, !!lastSync, "gov")}
+            {stepRow("MSIT 수집", lastSync?.msit_collect, !!lastSync, "msit")}
+            {stepRow("키워드 처리", lastSync?.process_keywords, !!lastSync, "keywords")}
           </div>
 
           {!lastSync && !syncLoading && (
@@ -549,7 +824,12 @@ export default function Home() {
         </section>
 
         <section className="mb-8" aria-label="분포 차트 영역">
-          <DashboardChartsRow categoryItems={chartCategoryItems} sourceItems={chartSourceItems} />
+          <DashboardChartsRow
+            categoryItems={chartCategoryItems}
+            sourceItems={chartSourceItems}
+            receptionSegments={chartReceptionSegments}
+            monthlyRegistrations={listSummary?.by_month ?? null}
+          />
         </section>
 
         <section className="mb-8 rounded-xl border border-slate-200/80 bg-white/70 p-5 shadow-sm backdrop-blur-sm sm:p-6">
@@ -557,7 +837,7 @@ export default function Home() {
             <div>
               <h2 className="text-base font-semibold text-slate-900">검색 및 필터</h2>
               <p className="mt-0.5 text-sm text-slate-600">
-                서버 검색은 키워드·카테고리·출처이며, 접수상태는 목록 로드 후 클라이언트에서 적용됩니다.
+                키워드·카테고리·출처·접수상태·정렬은 서버에서 반영되며, 페이지 단위로 목록을 불러옵니다.
               </p>
             </div>
           </div>
@@ -630,6 +910,24 @@ export default function Home() {
               </select>
             </label>
 
+            <label className="flex flex-col gap-1.5 sm:col-span-2 lg:col-span-1">
+              <span className={labelClass}>정렬</span>
+              <select
+                value={sortOrder}
+                onChange={(e) => {
+                  setSortOrder(e.target.value as SortOrderKey);
+                  setPage(1);
+                }}
+                className={inputClass}
+              >
+                {SORT_ORDER_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
             <div className="flex flex-col gap-2 sm:col-span-2 sm:flex-row sm:items-center sm:justify-end lg:col-span-4">
               <button
                 type="button"
@@ -663,11 +961,11 @@ export default function Home() {
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
           <p className="text-sm text-slate-600 sm:text-base">
             총{" "}
-            <strong className="font-semibold text-slate-900">{listLoading ? "…" : filteredData.length}</strong>
+            <strong className="font-semibold text-slate-900">{listLoading ? "…" : totalCount}</strong>
             건
-            {!listLoading && filteredData.length > 0 && (
+            {!listLoading && totalCount > 0 && (
               <span className="ml-2 font-normal text-slate-500">
-                (페이지 {safePage} / {totalPages})
+                (페이지 {safePage} / {displayTotalPages})
               </span>
             )}
           </p>
@@ -681,7 +979,7 @@ export default function Home() {
           >
             <p className="text-sm font-medium">목록을 불러오는 중입니다…</p>
           </div>
-        ) : filteredData.length === 0 ? (
+        ) : totalCount === 0 ? (
           <div className="rounded-xl border border-slate-200/80 bg-white/70 px-6 py-16 text-center shadow-sm backdrop-blur-sm">
             <p className="text-sm text-slate-600">
               조건에 맞는 공고가 없습니다. 필터를 바꾸거나 동기화를 실행해 보세요.
@@ -689,7 +987,7 @@ export default function Home() {
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-5 lg:grid-cols-3 lg:gap-6">
-            {pageSlice.map((item) => {
+            {data.map((item) => {
               const rec = computeRecommendScore(item, {
                 appliedKeyword: appliedKeyword,
                 appliedCategory: appliedCategory,
@@ -783,7 +1081,7 @@ export default function Home() {
           </div>
         )}
 
-        {!listLoading && filteredData.length > 0 && (
+        {!listLoading && totalCount > 0 && (
           <nav
             className="mt-8 flex flex-wrap items-center justify-center gap-3"
             aria-label="페이지 이동"
@@ -797,13 +1095,13 @@ export default function Home() {
               이전
             </button>
             <span className="min-w-[4rem] text-center text-sm text-slate-600">
-              {safePage} / {totalPages}
+              {safePage} / {displayTotalPages}
             </span>
             <button
               type="button"
               className="rounded-lg border border-slate-300 bg-white/60 px-4 py-2 text-sm font-semibold text-slate-800 shadow-sm backdrop-blur-sm transition hover:bg-slate-50/90 disabled:cursor-not-allowed disabled:opacity-40"
-              disabled={safePage >= totalPages}
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              disabled={safePage >= displayTotalPages}
+              onClick={() => setPage((p) => Math.min(displayTotalPages, p + 1))}
             >
               다음
             </button>

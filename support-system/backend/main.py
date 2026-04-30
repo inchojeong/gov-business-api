@@ -16,6 +16,8 @@ logging.basicConfig(
     format="%(levelname)s %(name)s: %(message)s",
 )
 
+logger = logging.getLogger(__name__)
+
 app = FastAPI()
 
 app.add_middleware(
@@ -70,16 +72,22 @@ def _sync_step_payload(
 ) -> dict:
     """Run one sync step; never raises. Returns { success, error, result }."""
     step: dict = {"success": False, "error": None, "result": None}
+    logger.info("sync-supports: [%s] 단계 시작", label)
     try:
         result = fn()
         step["result"] = result
         if isinstance(result, dict) and result.get("success") is False:
             step["error"] = result.get("message") or f"{label} 단계가 실패했습니다."
+            logger.error("sync-supports: [%s] 단계 실패 — %s", label, step["error"])
         else:
             step["success"] = True
+            rk = list(result.keys()) if isinstance(result, dict) else type(result).__name__
+            logger.info("sync-supports: [%s] 단계 성공 result=%s", label, rk)
     except Exception as exc:  # noqa: BLE001 — intentional per-step isolation
         step["error"] = str(exc)
         step["result"] = None
+        logger.exception("sync-supports: [%s] 단계 예외 — %s", label, exc)
+    logger.info("sync-supports: [%s] 단계 종료 success=%s", label, step["success"])
     return step
 
 
@@ -89,16 +97,17 @@ def sync_supports():
     GOV 수집 → MSIT 수집 → 키워드 처리를 순서대로 실행합니다.
     한 단계가 예외로 중단되어도 다음 단계는 시도하며, 각 단계 결과·에러를 반환합니다.
     """
+    logger.info("sync-supports: 파이프라인 시작 (GOV 50건/페이지, MSIT 3페이지×30건)")
     gov = _sync_step_payload(
         label="GOV",
-        fn=lambda: collect_gov_programs(page=1, per_page=10),
+        fn=lambda: collect_gov_programs(page=1, per_page=50),
     )
     msit = _sync_step_payload(
         label="MSIT",
         fn=lambda: collect_msit_programs(
             start_page=1,
-            page_count=1,
-            per_page=10,
+            page_count=3,
+            per_page=30,
         ),
     )
     keywords = _sync_step_payload(
@@ -107,6 +116,7 @@ def sync_supports():
     )
 
     all_success = gov["success"] and msit["success"] and keywords["success"]
+    logger.info("sync-supports: 파이프라인 종료 all_success=%s", all_success)
 
     return {
         "all_success": all_success,
@@ -128,9 +138,17 @@ def get_support_programs(
     category: str | None = Query(None),
     source: str | None = Query(None),
     keyword: str | None = Query(None),
+    reception_status: str | None = Query(None),
+    page: int = Query(1, ge=1),
+    size: int = Query(9, ge=1, le=100),
+    sort: str = Query("recommended"),
 ):
     return list_programs(
         category=_empty_to_none(category),
         source=_empty_to_none(source),
         keyword=_empty_to_none(keyword),
+        reception_status=_empty_to_none(reception_status),
+        page=page,
+        size=size,
+        sort=sort or "recommended",
     )

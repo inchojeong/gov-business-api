@@ -58,6 +58,12 @@ def process_keywords():
 
 @app.get("/support")
 def get_support_programs(
-    keyword: str = "",
+    category: str | None = Query(None),
+    source: str | None = Query(None),
+    keyword: str | None = Query(None),
 ):
-    return list_programs(keyword=keyword)
+    return list_programs(
+        category=category,
+        source=source,
+        keyword=keyword,
+    )

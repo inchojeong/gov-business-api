@@ -1,4 +1,3 @@
-import json
 import os
 from typing import Any, Dict, List
 
@@ -84,40 +83,42 @@ def collect_msit_programs(
                         normalized_items.append(items)
 
                 for item in normalized_items:
-                    business_name = item.get("subject") or "사업명 없음"
+                    title = item.get("subject") or "사업명 없음"
+                    description = ""
                     category = "R&D"
-                    department = item.get("deptName") or "과학기술정보통신부"
-                    notice_url = item.get("viewUrl") or ""
-                    start_date = item.get("pressDt") or ""
+                    source = "MSIT"
+                    organization = item.get("deptName") or "과학기술정보통신부"
+                    url = item.get("viewUrl") or ""
+                    press_dt = item.get("pressDt") or ""
+                    start_date = press_dt if press_dt else None
+                    end_date = None
 
                     sql = """
-                    INSERT INTO support_programs
+                    INSERT INTO programs
                     (
-                        business_name,
-                        target_text,
+                        title,
+                        description,
                         category,
-                        department,
+                        source,
+                        organization,
                         start_date,
                         end_date,
-                        notice_url,
-                        raw_data,
-                        source
+                        url
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                     """
 
                     cursor.execute(
                         sql,
                         (
-                            business_name,
-                            "",
+                            title,
+                            description,
                             category,
-                            department,
+                            source,
+                            organization,
                             start_date,
-                            "",
-                            notice_url,
-                            json.dumps(item, ensure_ascii=False),
-                            "과학기술정보통신부",
+                            end_date,
+                            url,
                         ),
                     )
 

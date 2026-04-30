@@ -1,4 +1,3 @@
-import json
 import os
 from typing import Any, Dict
 
@@ -39,46 +38,44 @@ def collect_gov_programs(page: int = 1, per_page: int = 50) -> Dict[str, Any]:
 
     try:
         with conn.cursor() as cursor:
-            cursor.execute("DELETE FROM support_programs")
+            cursor.execute("DELETE FROM programs")
 
             for item in items:
-                business_name = item.get("사업명") or "사업명 없음"
+                title = item.get("사업명") or "사업명 없음"
+                description = ""
                 category = item.get("분야") or ""
-                notice_url = item.get("상세URL") or ""
-
-                target_text = ""
-                department = ""
-                start_date = ""
-                end_date = ""
+                source = "GOV"
+                organization = "중소벤처기업부"
+                start_date = None
+                end_date = None
+                url = item.get("상세URL") or ""
 
                 sql = """
-                INSERT INTO support_programs
+                INSERT INTO programs
                 (
-                    business_name,
-                    target_text,
+                    title,
+                    description,
                     category,
-                    department,
+                    source,
+                    organization,
                     start_date,
                     end_date,
-                    notice_url,
-                    raw_data,
-                    source
+                    url
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 """
 
                 cursor.execute(
                     sql,
                     (
-                        business_name,
-                        target_text,
+                        title,
+                        description,
                         category,
-                        department,
+                        source,
+                        organization,
                         start_date,
                         end_date,
-                        notice_url,
-                        json.dumps(item, ensure_ascii=False),
-                        "중소벤처기업부",
+                        url,
                     ),
                 )
 

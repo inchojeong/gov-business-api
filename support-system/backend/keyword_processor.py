@@ -57,9 +57,19 @@ def process_all_program_keywords():
         with conn.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id, full_text
-                FROM support_programs
-                WHERE full_text IS NOT NULL
+                SELECT
+                    id,
+                    title,
+                    description,
+                    category,
+                    organization
+                FROM programs
+                WHERE CONCAT(
+                    COALESCE(title, ''),
+                    COALESCE(description, ''),
+                    COALESCE(category, ''),
+                    COALESCE(organization, '')
+                ) <> ''
                 """
             )
             rows = cursor.fetchall()
@@ -68,8 +78,15 @@ def process_all_program_keywords():
         keyword_count = 0
 
         for row in rows:
-            program_id = row[0]
-            full_text = row[1] or ""
+            program_id = row["id"]
+            full_text = " ".join(
+                [
+                    row.get("title") or "",
+                    row.get("description") or "",
+                    row.get("category") or "",
+                    row.get("organization") or "",
+                ]
+            )
 
             keywords = extract_keywords(full_text)
 

@@ -4,8 +4,8 @@ from dotenv import load_dotenv
 
 from collectors.gov_collector import collect_gov_programs
 from collectors.msit_collector import collect_msit_programs
-from database import get_db
-from keyword_processor import process_all_program_keywords
+from services.keyword_service import run_process_keywords
+from services.programs_service import list_programs
 
 load_dotenv()
 
@@ -53,49 +53,11 @@ def collect_msit_programs_route(
 
 @app.post("/process-keywords")
 def process_keywords():
-    result = process_all_program_keywords()
-
-    return {
-        "success": True,
-        "message": "키워드 생성 완료",
-        "processed_count": result["processed_count"],
-        "keyword_count": result["keyword_count"],
-    }
+    return run_process_keywords()
 
 
 @app.get("/support")
 def get_support_programs(
     keyword: str = "",
 ):
-    conn = get_db()
-
-    try:
-        with conn.cursor() as cursor:
-            if keyword:
-                sql = """
-                SELECT *
-                FROM support_programs
-                WHERE business_name LIKE %s
-                   OR target_text LIKE %s
-                   OR category LIKE %s
-                   OR department LIKE %s
-                ORDER BY id DESC
-                LIMIT 100
-                """
-                like_keyword = f"%{keyword}%"
-                cursor.execute(sql, (like_keyword, like_keyword, like_keyword, like_keyword))
-            else:
-                sql = """
-                SELECT *
-                FROM support_programs
-                ORDER BY id DESC
-                LIMIT 100
-                """
-                cursor.execute(sql)
-
-            rows = cursor.fetchall()
-
-    finally:
-        conn.close()
-
-    return rows
+    return list_programs(keyword=keyword)

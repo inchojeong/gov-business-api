@@ -1,4 +1,4 @@
-from database import get_db
+from database import ensure_programs_schema, get_db
 
 KEYWORD_DICT = {
     "tech": ["AI", "인공지능", "데이터", "빅데이터", "클라우드", "SaaS", "DX", "AX", "디지털전환"],
@@ -54,6 +54,7 @@ def process_all_program_keywords():
     conn = get_db()
 
     try:
+        ensure_programs_schema(conn)
         with conn.cursor() as cursor:
             cursor.execute(
                 """
@@ -62,13 +63,15 @@ def process_all_program_keywords():
                     title,
                     description,
                     category,
-                    organization
+                    organization,
+                    support_target
                 FROM programs
                 WHERE CONCAT(
                     COALESCE(title, ''),
                     COALESCE(description, ''),
                     COALESCE(category, ''),
-                    COALESCE(organization, '')
+                    COALESCE(organization, ''),
+                    COALESCE(support_target, '')
                 ) <> ''
                 """
             )
@@ -85,6 +88,7 @@ def process_all_program_keywords():
                     row.get("description") or "",
                     row.get("category") or "",
                     row.get("organization") or "",
+                    row.get("support_target") or "",
                 ]
             )
 

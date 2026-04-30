@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
@@ -8,6 +10,11 @@ from services.keyword_service import run_process_keywords
 from services.programs_service import list_programs
 
 load_dotenv()
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(levelname)s %(name)s: %(message)s",
+)
 
 app = FastAPI()
 
@@ -56,6 +63,66 @@ def process_keywords():
     return run_process_keywords()
 
 
+def _sync_step_payload(
+    *,
+    label: str,
+    fn,
+) -> dict:
+    """Run one sync step; never raises. Returns { success, error, result }."""
+    step: dict = {"success": False, "error": None, "result": None}
+    try:
+        result = fn()
+        step["result"] = result
+        if isinstance(result, dict) and result.get("success") is False:
+            step["error"] = result.get("message") or f"{label} 단계가 실패했습니다."
+        else:
+            step["success"] = True
+    except Exception as exc:  # noqa: BLE001 — intentional per-step isolation
+        step["error"] = str(exc)
+        step["result"] = None
+    return step
+
+
+@app.post("/sync-supports")
+def sync_supports():
+    """
+    GOV 수집 → MSIT 수집 → 키워드 처리를 순서대로 실행합니다.
+    한 단계가 예외로 중단되어도 다음 단계는 시도하며, 각 단계 결과·에러를 반환합니다.
+    """
+    gov = _sync_step_payload(
+        label="GOV",
+        fn=lambda: collect_gov_programs(page=1, per_page=10),
+    )
+    msit = _sync_step_payload(
+        label="MSIT",
+        fn=lambda: collect_msit_programs(
+            start_page=1,
+            page_count=1,
+            per_page=10,
+        ),
+    )
+    keywords = _sync_step_payload(
+        label="키워드",
+        fn=run_process_keywords,
+    )
+
+    all_success = gov["success"] and msit["success"] and keywords["success"]
+
+    return {
+        "all_success": all_success,
+        "gov_collect": gov,
+        "msit_collect": msit,
+        "process_keywords": keywords,
+    }
+
+
+def _empty_to_none(v: str | None) -> str | None:
+    """쿼리스트링의 빈 문자열을 None으로 (list_programs에서 다시 trim)."""
+    if v is None:
+        return None
+    return v if v != "" else None
+
+
 @app.get("/support")
 def get_support_programs(
     category: str | None = Query(None),
@@ -63,7 +130,7 @@ def get_support_programs(
     keyword: str | None = Query(None),
 ):
     return list_programs(
-        category=category,
-        source=source,
-        keyword=keyword,
+        category=_empty_to_none(category),
+        source=_empty_to_none(source),
+        keyword=_empty_to_none(keyword),
     )

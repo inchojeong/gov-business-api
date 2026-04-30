@@ -4,12 +4,82 @@ from typing import Any, Dict, List
 import requests
 from dotenv import load_dotenv
 
-from database import get_db
+from collectors.field_mapping import (
+    first_nonempty_str,
+    join_description_parts,
+    normalize_date_value,
+)
+from database import ensure_programs_schema, get_db
 
 load_dotenv()
 
 MSIT_API_URL = os.getenv("MSIT_API_URL")
 MSIT_SERVICE_KEY = os.getenv("MSIT_SERVICE_KEY")
+
+_MSIT_TITLE_KEYS = ("subject", "title", "bizTitle", "사업명")
+_MSIT_URL_KEYS = ("viewUrl", "url", "link", "detailUrl")
+_MSIT_ORG_KEYS = ("deptName", "organNm", "chargeDept", "주관기관")
+_MSIT_CATEGORY_KEYS = ("bizType", "category", "typeNm", "구분")
+_MSIT_TARGET_KEYS = ("supportTrget", "target", "reqstTrget", "지원대상")
+_MSIT_SCALE_KEYS = ("supportScale", "scale", "budget", "지원규모")
+_MSIT_PERIOD_KEYS = ("taskPeriod", "performPeriod", "projectPeriod", "bsnsPeriod", "사업기간")
+_MSIT_DESC_KEYS = ("contents", "content", "htmlCn", "cn", "description", "공고내용")
+_MSIT_START_KEYS = (
+    "reqstBeginDe",
+    "applcntBeginDt",
+    "applicationStartDate",
+    "rcvsgnBeginDt",
+    "접수시작일",
+    "신청시작일",
+)
+_MSIT_END_KEYS = (
+    "reqstEndDe",
+    "applcntEndDt",
+    "applicationEndDate",
+    "rcvsgnEndDt",
+    "접수종료일",
+    "신청종료일",
+)
+_MSIT_PRESS_KEYS = ("pressDt", "registDt", "creatDt", "등록일")
+
+
+def _map_msit_item_to_row(item: Dict[str, Any]) -> Dict[str, Any] | None:
+    url = (first_nonempty_str(item, _MSIT_URL_KEYS) or "").strip()
+    if not url:
+        return None
+
+    title = first_nonempty_str(item, _MSIT_TITLE_KEYS) or "사업명 없음"
+    organization = first_nonempty_str(item, _MSIT_ORG_KEYS) or "과학기술정보통신부"
+    category = first_nonempty_str(item, _MSIT_CATEGORY_KEYS) or "R&D"
+    support_target = first_nonempty_str(item, _MSIT_TARGET_KEYS)
+    support_scale = first_nonempty_str(item, _MSIT_SCALE_KEYS)
+    project_period = first_nonempty_str(item, _MSIT_PERIOD_KEYS)
+
+    raw_start = first_nonempty_str(item, _MSIT_START_KEYS)
+    raw_end = first_nonempty_str(item, _MSIT_END_KEYS)
+    start_date = normalize_date_value(raw_start)
+    end_date = normalize_date_value(raw_end)
+
+    if not start_date and not end_date:
+        press = first_nonempty_str(item, _MSIT_PRESS_KEYS)
+        start_date = normalize_date_value(press)
+
+    desc_parts = [first_nonempty_str(item, (k,)) for k in _MSIT_DESC_KEYS]
+    description = join_description_parts([p for p in desc_parts if p])
+
+    return {
+        "title": title,
+        "description": description,
+        "category": category,
+        "source": "MSIT",
+        "organization": organization,
+        "start_date": start_date,
+        "end_date": end_date,
+        "url": url,
+        "support_target": support_target,
+        "support_scale": support_scale,
+        "project_period": project_period,
+    }
 
 
 def collect_msit_programs(
@@ -19,9 +89,11 @@ def collect_msit_programs(
 ) -> Dict[str, Any]:
     conn = get_db()
     saved_count = 0
+    skipped_count = 0
     failed_pages: List[Dict[str, Any]] = []
 
     try:
+        ensure_programs_schema(conn)
         with conn.cursor() as cursor:
             for page in range(start_page, start_page + page_count):
                 params = {
@@ -83,15 +155,22 @@ def collect_msit_programs(
                         normalized_items.append(items)
 
                 for item in normalized_items:
-                    title = item.get("subject") or "사업명 없음"
-                    description = ""
-                    category = "R&D"
-                    source = "MSIT"
-                    organization = item.get("deptName") or "과학기술정보통신부"
-                    url = item.get("viewUrl") or ""
-                    press_dt = item.get("pressDt") or ""
-                    start_date = press_dt if press_dt else None
-                    end_date = None
+                    if not isinstance(item, dict):
+                        skipped_count += 1
+                        continue
+
+                    row = _map_msit_item_to_row(item)
+                    if row is None:
+                        skipped_count += 1
+                        continue
+
+                    cursor.execute(
+                        "SELECT 1 FROM programs WHERE url = %s LIMIT 1",
+                        (row["url"],),
+                    )
+                    if cursor.fetchone() is not None:
+                        skipped_count += 1
+                        continue
 
                     sql = """
                     INSERT INTO programs
@@ -103,22 +182,28 @@ def collect_msit_programs(
                         organization,
                         start_date,
                         end_date,
-                        url
+                        url,
+                        support_target,
+                        support_scale,
+                        project_period
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """
 
                     cursor.execute(
                         sql,
                         (
-                            title,
-                            description,
-                            category,
-                            source,
-                            organization,
-                            start_date,
-                            end_date,
-                            url,
+                            row["title"],
+                            row["description"],
+                            row["category"],
+                            row["source"],
+                            row["organization"],
+                            row["start_date"],
+                            row["end_date"],
+                            row["url"],
+                            row["support_target"],
+                            row["support_scale"],
+                            row["project_period"],
                         ),
                     )
 
@@ -133,5 +218,6 @@ def collect_msit_programs(
         "success": True,
         "message": "과기정통부 API 수집 완료",
         "saved_count": saved_count,
+        "skipped_count": skipped_count,
         "failed_pages": failed_pages,
     }

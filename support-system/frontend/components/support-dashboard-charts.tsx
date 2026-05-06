@@ -24,29 +24,29 @@ export type ChartPieSegment = { name: string; value: number };
 export type MonthlyRegistrationPoint = { month: string; count: number };
 
 const cardClass =
-  "rounded-xl border border-slate-200/80 bg-white/70 p-5 shadow-sm backdrop-blur-sm sm:p-6";
+  "rounded-xl border border-white/[0.08] bg-[#111111] p-5 shadow-[0_0_0_1px_rgba(255,255,255,0.04),0_8px_40px_-12px_rgba(0,0,0,0.85)] sm:p-6";
 
 const CATEGORY_FILL = [
-  "#64748b",
-  "#94a3b8",
-  "#475569",
-  "#cbd5e1",
-  "#334155",
+  "#71717a",
+  "#a1a1aa",
+  "#52525b",
+  "#d4d4d8",
+  "#3f3f46",
   "#78716c",
   "#a8a29e",
 ];
 
 const SOURCE_FILL: Record<string, string> = {
-  GOV: "#93c5fd",
-  MSIT: "#86efac",
-  기타: "#cbd5e1",
+  GOV: "#38bdf8",
+  MSIT: "#4ade80",
+  기타: "#a1a1aa",
 };
 
 const RECEPTION_FILL: Record<string, string> = {
-  접수중: "#5eead4",
-  예정: "#d4d4d8",
-  마감: "#a1a1aa",
-  기간미상: "#d6d3d1",
+  접수중: "#2dd4bf",
+  예정: "#e4e4e7",
+  마감: "#71717a",
+  기간미상: "#a8a29e",
 };
 
 function ChartTooltip({
@@ -78,9 +78,9 @@ function ChartTooltip({
         ? p.value
         : Number(p?.value ?? 0);
   return (
-    <div className="rounded-lg border border-slate-200/90 bg-white/95 px-3 py-2 text-xs shadow-md backdrop-blur-sm">
-      <p className="font-semibold text-slate-800">{name}</p>
-      <p className="tabular-nums text-slate-600">{value}건</p>
+    <div className="rounded-lg border border-white/10 bg-[#1a1a1a] px-3 py-2 text-xs shadow-lg">
+      <p className="font-semibold text-zinc-100">{name}</p>
+      <p className="tabular-nums text-zinc-400">{value}건</p>
     </div>
   );
 }
@@ -107,11 +107,11 @@ export function CategoryDonutCard({
   return (
     <div className={cardClass}>
       <div className="mb-3">
-        <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
-        {description ? <p className="mt-1 text-xs text-slate-600">{description}</p> : null}
+        <h3 className="text-sm font-semibold text-zinc-100">{title}</h3>
+        {description ? <p className="mt-1 text-xs text-zinc-500">{description}</p> : null}
       </div>
       {data.length === 0 ? (
-        <p className="py-10 text-center text-sm text-slate-500">{emptyHint}</p>
+        <p className="py-10 text-center text-sm text-zinc-500">{emptyHint}</p>
       ) : (
         <div className="h-[260px] w-full min-h-[220px]">
           <ResponsiveContainer width="100%" height="100%">
@@ -125,7 +125,7 @@ export function CategoryDonutCard({
                 innerRadius="48%"
                 outerRadius="72%"
                 paddingAngle={1}
-                stroke="#f8fafc"
+                stroke="#0b0b0b"
                 strokeWidth={1}
               >
                 {data.map((_, i) => (
@@ -136,7 +136,7 @@ export function CategoryDonutCard({
               <Legend
                 verticalAlign="bottom"
                 height={36}
-                formatter={(value) => <span className="text-xs text-slate-600">{value}</span>}
+                formatter={(value) => <span className="text-xs text-zinc-400">{value}</span>}
               />
             </PieChart>
           </ResponsiveContainer>
@@ -164,25 +164,25 @@ export function SourceBarCard({
   return (
     <div className={cardClass}>
       <div className="mb-3">
-        <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
-        {description ? <p className="mt-1 text-xs text-slate-600">{description}</p> : null}
+        <h3 className="text-sm font-semibold text-zinc-100">{title}</h3>
+        {description ? <p className="mt-1 text-xs text-zinc-500">{description}</p> : null}
       </div>
       {data.length === 0 ? (
-        <p className="py-10 text-center text-sm text-slate-500">{emptyHint}</p>
+        <p className="py-10 text-center text-sm text-zinc-500">{emptyHint}</p>
       ) : (
         <div className="h-[260px] w-full min-h-[220px]">
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 8 }} barCategoryGap="18%">
-              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-              <XAxis dataKey="name" tick={{ fontSize: 11, fill: "#64748b" }} axisLine={{ stroke: "#e2e8f0" }} />
+              <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
+              <XAxis dataKey="name" tick={{ fontSize: 11, fill: "#a1a1aa" }} axisLine={{ stroke: "#3f3f46" }} />
               <YAxis
-                tick={{ fontSize: 11, fill: "#64748b" }}
+                tick={{ fontSize: 11, fill: "#a1a1aa" }}
                 axisLine={false}
                 tickLine={false}
                 allowDecimals={false}
                 width={36}
               />
-              <Tooltip content={<ChartTooltip />} cursor={{ fill: "rgba(148, 163, 184, 0.12)" }} />
+              <Tooltip content={<ChartTooltip />} cursor={{ fill: "rgba(255, 255, 255, 0.06)" }} />
               <Bar dataKey="value" radius={[4, 4, 0, 0]} maxBarSize={40}>
                 {data.map((entry, i) => (
                   <Cell
@@ -217,11 +217,11 @@ export function ReceptionDonutCard({
   return (
     <div className={cardClass}>
       <div className="mb-3">
-        <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
-        {description ? <p className="mt-1 text-xs text-slate-600">{description}</p> : null}
+        <h3 className="text-sm font-semibold text-zinc-100">{title}</h3>
+        {description ? <p className="mt-1 text-xs text-zinc-500">{description}</p> : null}
       </div>
       {data.length === 0 ? (
-        <p className="py-10 text-center text-sm text-slate-500">{emptyHint}</p>
+        <p className="py-10 text-center text-sm text-zinc-500">{emptyHint}</p>
       ) : (
         <div className="h-[260px] w-full min-h-[220px]">
           <ResponsiveContainer width="100%" height="100%">
@@ -235,7 +235,7 @@ export function ReceptionDonutCard({
                 innerRadius="48%"
                 outerRadius="72%"
                 paddingAngle={1}
-                stroke="#f8fafc"
+                stroke="#0b0b0b"
                 strokeWidth={1}
               >
                 {data.map((entry, i) => (
@@ -249,7 +249,7 @@ export function ReceptionDonutCard({
               <Legend
                 verticalAlign="bottom"
                 height={36}
-                formatter={(value) => <span className="text-xs text-slate-600">{value}</span>}
+                formatter={(value) => <span className="text-xs text-zinc-400">{value}</span>}
               />
             </PieChart>
           </ResponsiveContainer>
@@ -278,17 +278,17 @@ export function RegistrationTrendCard({
   return (
     <div className={cardClass}>
       <div className="mb-3">
-        <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
-        {description ? <p className="mt-1 text-xs text-slate-600">{description}</p> : null}
+        <h3 className="text-sm font-semibold text-zinc-100">{title}</h3>
+        {description ? <p className="mt-1 text-xs text-zinc-500">{description}</p> : null}
       </div>
       {hasData ? (
         <div className="h-[260px] w-full min-h-[220px]">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={chartData} margin={{ top: 8, right: 12, left: 0, bottom: 8 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-              <XAxis dataKey="month" tick={{ fontSize: 11, fill: "#64748b" }} axisLine={{ stroke: "#e2e8f0" }} />
+              <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
+              <XAxis dataKey="month" tick={{ fontSize: 11, fill: "#a1a1aa" }} axisLine={{ stroke: "#3f3f46" }} />
               <YAxis
-                tick={{ fontSize: 11, fill: "#64748b" }}
+                tick={{ fontSize: 11, fill: "#a1a1aa" }}
                 axisLine={false}
                 tickLine={false}
                 allowDecimals={false}
@@ -299,9 +299,9 @@ export function RegistrationTrendCard({
                 type="monotone"
                 dataKey="count"
                 name="등록 건수"
-                stroke="#64748b"
+                stroke="#a1a1aa"
                 strokeWidth={2}
-                dot={{ r: 3, fill: "#475569", strokeWidth: 0 }}
+                dot={{ r: 3, fill: "#e4e4e7", strokeWidth: 0 }}
                 activeDot={{ r: 4 }}
               />
             </LineChart>
@@ -309,12 +309,12 @@ export function RegistrationTrendCard({
         </div>
       ) : (
         <div
-          className="flex min-h-[220px] flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-slate-200/90 bg-slate-50/50 px-4 py-10 text-center"
+          className="flex min-h-[220px] flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-white/10 bg-white/[0.02] px-4 py-10 text-center"
           role="status"
           aria-label="최근 등록 추이 차트 준비 중"
         >
-          <p className="text-sm font-medium text-slate-600">월별 등록 추이</p>
-          <p className="max-w-xs text-xs leading-relaxed text-slate-500">
+          <p className="text-sm font-medium text-zinc-400">월별 등록 추이</p>
+          <p className="max-w-xs text-xs leading-relaxed text-zinc-500">
             현재 API에는 월별 집계가 포함되어 있지 않습니다. 추후 summary에 월별 배열이 포함되면 이 영역에
             라인 차트가 표시됩니다.
           </p>
